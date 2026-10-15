@@ -433,8 +433,9 @@ export function doctor(): DoctorReport {
 	if (status.status === 0) {
 		const line = (status.stdout ?? "").split("\n").find((entry) => entry.startsWith("pi:"));
 		report.integration = line?.trim();
-		if (line && !line.startsWith("pi: ok")) {
-			report.problems.push(`The pi integration looks stale (${line.trim()}); run: herdr integration install pi`);
+		// Herdr reports one of: `current (vN)`, `outdated (vN < vM)`, `not installed`.
+		if (line && /^pi:\s*(outdated|not installed)\b/.test(line)) {
+			report.problems.push(`The pi integration is not current (${line.trim()}); run: herdr integration install pi`);
 		}
 	}
 

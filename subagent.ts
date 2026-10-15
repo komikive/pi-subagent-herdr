@@ -9,7 +9,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -251,15 +251,33 @@ function spawnSubagent(args: string[]): void {
 
 	const tab = createTab({ workspaceId: callerWorkspaceId(), label, cwd, env: childEnv });
 
-	const initialArgs = [...files.map((file) => `@${file}`)];
-	if (prompts.length > 0) {
-		// Herdr spawns agents through a shell, so newlines in argv are rejected
-		// ("agent arguments cannot be encoded safely for the target shell"). Writing the
-		// task to a file and passing it as a single-line `@file` mention keeps arbitrary
-		// multi-line prompts working, and survives even if the control bridge fails to load.
-		const taskFile = join(runDir, "task.md");
-		writeFileSync(taskFile, `Task:\n${prompts.join("\n\n")}\n`, { encoding: "utf8", mode: 0o600 });
-		initialArgs.push(`@${taskFile}`);
+	// The task is delivered through the control inbox, never as a command-line argument,
+	// for two independent reasons:
+	//
+	//  1. `herdr agent start` only returns once the agent is interactively *idle*. Launch
+	//     it with a task and a long run never reaches idle, so startup times out even
+	//     though the child is healthy and working.
+	//  2. Herdr spawns agents through a shell and rejects newlines in argv
+	//     ("agent arguments cannot be encoded safely for the target shell").
+	//
+	// Writing the task first also closes the window where a child is up but has nothing to do.
+	const taskParts: string[] = [];
+	for (const file of files) {
+		// Inlined rather than passed as an `@path` mention, because @-mention expansion is a
+		// CLI/editor feature that a programmatic user message does not necessarily apply.
+		taskParts.push(`<file path="${file}">\n${readFileSync(file, "utf8").trimEnd()}\n</file>`);
+	}
+	if (prompts.length > 0) taskParts.push(`Task:\n${prompts.join("\n\n")}`);
+	const task = taskParts.join("\n\n");
+
+	if (task) {
+		// Kept on disk so a human can read exactly what the child was asked to do.
+		writeFileSync(join(runDir, "task.md"), `${task}\n`, { encoding: "utf8", mode: 0o600 });
+		const queueDir = inboxDir(runDir);
+		mkdirSync(queueDir, { recursive: true, mode: 0o700 });
+		const payload: InboxMessage = { message: task, delivery: "auto" };
+		const target = join(queueDir, `0000000000000-${handle}.json`);
+		writeFileSync(target, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
 	}
 
 	const piArgs = [
@@ -274,15 +292,29 @@ function spawnSubagent(args: string[]): void {
 		"--name",
 		label,
 		...launchArgs,
-		...initialArgs,
 	];
 
 	try {
 		startAgent({ name: agentName, paneId: tab.paneId, args: piArgs });
 	} catch (error) {
-		closePane(tab.paneId);
-		removeRunDir(handle);
-		throw error;
+		// `agent start` waits for the agent to become interactively idle, so a timeout does
+		// not prove the child failed. Check whether it is actually up before destroying it:
+		// tearing down a healthy, working subagent is far worse than reporting a late start.
+		const alive = listAgents().find((agent) => agent.pane_id === tab.paneId);
+		if (!alive) {
+			// Capture the child's terminal before discarding the pane; a real startup failure
+			// is usually visible there, and closing first destroys the evidence.
+			let detail = "";
+			try {
+				detail = readAgent(tab.paneId, 40).trim();
+			} catch {
+				// The pane may already be gone.
+			}
+			closePane(tab.paneId);
+			removeRunDir(handle);
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(detail ? `${message}\n\nThe child terminal showed:\n\n${detail}` : message);
+		}
 	}
 
 	const now = new Date().toISOString();
