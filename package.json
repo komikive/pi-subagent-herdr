@@ -1,0 +1,36 @@
+{
+	"name": "pi-subagent-herdr",
+	"version": "0.1.0",
+	"description": "Observable Pi subagents that run in Herdr tabs: delegate work, watch it live, and keep it running after the parent session exits.",
+	"keywords": ["pi-package", "herdr", "subagent"],
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/komikive/pi-subagent-herdr.git"
+	},
+	"homepage": "https://github.com/komikive/pi-subagent-herdr#readme",
+	"bugs": {
+		"url": "https://github.com/komikive/pi-subagent-herdr/issues"
+	},
+	"engines": {
+		"node": ">=22.19"
+	},
+	"bin": {
+		"subagent": "./subagent.ts"
+	},
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"scripts": {
+		"check": "tsc --noEmit"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"typescript": "^5.9.0"
+	}
+}
