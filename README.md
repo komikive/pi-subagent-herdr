@@ -46,11 +46,11 @@ herdr integration install pi
 The extension and the `subagent` CLI are two halves of the same package, and both are needed.
 
 ```sh
-pi install git:github.com/komikive/pi-subagent-herdr
+pi install npm:pi-subagent-herdr
 ```
 
 Then run `/reload` in an existing Pi session, and confirm the environment with `subagent doctor`.
-The extension contributes its bundled skill automatically.
+The extension contributes its bundled skill automatically. `pi install git:github.com/komikive/pi-subagent-herdr` works too, though that route is not built, so it only carries the sources.
 
 Pi installs a package's extension but not its `bin` entries, so on load the extension links its own
 CLI into `~/.pi/agent/bin`, the directory Pi already puts on `PATH`. That link is created once and is
@@ -58,26 +58,33 @@ idempotent. It never takes over a name something else already owns — your own 
 install, or a plain file all win over it — and a link left dangling by a moved install is the one
 case it repairs.
 
-To manage that link yourself instead, point it at `subagent.ts` inside the installed package. The
-path follows `PI_CODING_AGENT_DIR`, which defaults to `~/.pi/agent`:
+To manage that link yourself instead, point it at the CLI inside the installed package. The path
+follows `PI_CODING_AGENT_DIR`, which defaults to `~/.pi/agent`:
 
 ```sh
-ln -s "$HOME/.pi/agent/git/github.com/komikive/pi-subagent-herdr/subagent.ts" \
+ln -s "$HOME/.pi/agent/npm/node_modules/pi-subagent-herdr/dist/subagent.js" \
       "$HOME/.pi/agent/bin/subagent"
 ```
 
 ### Working on the extension itself
 
 Clone it wherever you like and link the directory in. Pi discovers extension directories through
-symlinks, so `/reload` picks up your edits without a reinstall:
+symlinks, so a rebuild plus `/reload` picks up your edits without a reinstall:
 
 ```sh
 git clone https://github.com/komikive/pi-subagent-herdr ~/dev/pi-subagent-herdr
+cd ~/dev/pi-subagent-herdr && npm install
 ln -s ~/dev/pi-subagent-herdr ~/.pi/agent/extensions/subagent
 ```
 
-`npm install && npm test` runs the checks. The extension test needs a Herdr pane and skips that half
-without one.
+`npm run check`, `npm run build`, and `npm test` are the three steps. The extension test needs a
+Herdr pane and skips that half without one; it exercises both the source and, when built, the
+packaged form.
+
+`npm run build` bundles `dist/`, which is what npm publishes. The published bin has to be compiled
+JavaScript: Node refuses to strip types for files under `node_modules`
+(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), and `pi install` puts packages there, so a
+TypeScript bin would be dead on arrival for every npm user.
 
 ## Usage
 

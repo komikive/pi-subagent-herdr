@@ -2,15 +2,19 @@
 	"name": "pi-subagent-herdr",
 	"version": "0.1.0",
 	"description": "Observable Pi subagents that run in Herdr tabs: delegate work, watch it live, and keep it running after the parent session exits.",
-	"keywords": ["pi-package", "pi", "herdr", "subagent", "subagents", "agent-orchestration", "terminal"],
+	"keywords": [
+		"pi-package",
+		"pi",
+		"herdr",
+		"subagent",
+		"subagents",
+		"agent-orchestration",
+		"terminal"
+	],
 	"type": "module",
 	"license": "MIT",
 	"files": [
-		"index.ts",
-		"herdr.ts",
-		"shared.ts",
-		"subagent.ts",
-		"skills",
+		"dist",
 		"NOTICE"
 	],
 	"repository": {
@@ -25,12 +29,16 @@
 		"node": ">=22.19"
 	},
 	"bin": {
-		"subagent": "./subagent.ts"
+		"subagent": "./dist/subagent.js"
 	},
 	"pi": {
-		"extensions": ["./index.ts"]
+		"extensions": [
+			"./dist/index.js"
+		]
 	},
 	"scripts": {
+		"build": "node scripts/build.mjs",
+		"prepack": "npm run build",
 		"check": "tsc --noEmit",
 		"test": "node test/subscription.test.mjs && node test/extension.test.mjs"
 	},
@@ -42,6 +50,7 @@
 		"@earendil-works/pi-coding-agent": "1.2.0",
 		"@earendil-works/pi-tui": "1.2.0",
 		"@types/node": "^24.0.0",
+		"esbuild": "^0.28.2",
 		"typescript": "^5.9.0"
 	}
 }

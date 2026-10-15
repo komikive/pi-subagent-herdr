@@ -47,6 +47,7 @@ import {
 	runLabel,
 	isValidRunName,
 	pendingInboxCount,
+	siblingEntry,
 	updateManifest,
 	writeManifest,
 	type InboxMessage,
@@ -258,7 +259,9 @@ async function spawnSubagent(args: string[]): Promise<void> {
 		// control bridge and Herdr's pi integration. Both are load-bearing, so inject them
 		// explicitly: without the bridge the child never sees its task, and without the
 		// integration Herdr cannot classify its state.
-		launchArgs.push("--no-extensions", "--extension", join(packageDir, "index.ts"));
+		const bridge = siblingEntry(packageDir, "index");
+		if (!bridge) fail(`Could not locate the control bridge next to ${packageDir}`);
+		launchArgs.push("--no-extensions", "--extension", bridge);
 		const herdrBridge = join(getAgentDir(), "extensions", "herdr-agent-state.ts");
 		if (existsSync(herdrBridge)) launchArgs.push("--extension", herdrBridge);
 	}

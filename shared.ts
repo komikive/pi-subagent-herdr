@@ -68,6 +68,21 @@ export function getAgentDir(): string {
 	return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 }
 
+/**
+ * Resolve a runtime entry that sits beside the calling module.
+ *
+ * A published install runs compiled JavaScript from `dist/`; a development checkout runs the
+ * TypeScript sources in place. Trying both keeps the packaged layout and the checked-out one
+ * working without a build-time path substitution.
+ */
+export function siblingEntry(dir: string, basename: string): string | undefined {
+	for (const extension of ["js", "ts"]) {
+		const candidate = join(dir, `${basename}.${extension}`);
+		if (existsSync(candidate)) return candidate;
+	}
+	return undefined;
+}
+
 export function getRunsDir(): string {
 	return join(getAgentDir(), "subagents");
 }

@@ -1,18 +1,19 @@
 // Exercises the extension's parent side, which the CLI never touches.
 //
-// Two things are covered here:
-//   1. The CLI link that makes `pi install` sufficient on its own.
+// Covered here:
+//   1. The CLI link that makes `pi install` sufficient on its own, for both the source
+//      checkout and the compiled package. The packaged form must link the built JavaScript:
+//      Node refuses to strip types under node_modules, so linking the .ts would leave every
+//      npm user without a working CLI.
 //   2. The widget path: manifest loading, the Herdr join, and widget teardown.
 //
 // The widget half needs a real Herdr pane and is skipped without one.
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const cliPath = join(packageDir, "subagent.ts");
-const extension = (await import("../index.ts")).default;
 
 let failures = 0;
 function check(name, ok, detail = "") {
@@ -44,7 +45,7 @@ function fakePi() {
 function fakeCtx(sessionId) {
 	const ui = {
 		widget: undefined,
-		theme: { fg: (_color, text) => text },
+		theme: { fg: (_color, text) => text, bold: (text) => text },
 		setWidget(_key, value) {
 			ui.widget = value;
 		},
@@ -63,15 +64,11 @@ function fakeCtx(sessionId) {
 	};
 }
 
-// ---------------------------------------------------------------------------
-// 1. The CLI link
-// ---------------------------------------------------------------------------
-
-function loadWithAgentDir(agentDir) {
+function loadWithAgentDir(load, agentDir) {
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	delete process.env.PI_SUBAGENT_RUN_DIR;
 	const pi = fakePi();
-	extension(pi);
+	load(pi);
 	return pi;
 }
 
@@ -88,56 +85,72 @@ function linkState(link) {
 	}
 }
 
-console.log("\n1. CLI link");
-
-{
-	const agentDir = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
-	const link = join(agentDir, "bin", "subagent");
-	loadWithAgentDir(agentDir);
-	const state = linkState(link);
-	check(
-		"created when absent",
-		state.kind === "resolves" && state.target === realpathSync(cliPath),
-		`${state.kind}${state.target ? ` -> ${state.target}` : ""}`,
-	);
-	loadWithAgentDir(agentDir);
-	check("idempotent on a second load", linkState(link).kind === "resolves");
-	rmSync(agentDir, { recursive: true, force: true });
+const source = (await import("../index.ts")).default;
+let built;
+try {
+	built = (await import("../dist/index.js")).default;
+} catch {
+	built = undefined;
 }
 
-{
-	// A link owned by something else, pointing at a live file, must survive untouched.
-	const agentDir = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
-	const foreignTarget = join(agentDir, "someone-elses-cli");
-	writeFileSync(foreignTarget, "#!/bin/sh\n");
-	mkdirSync(join(agentDir, "bin"), { recursive: true });
-	symlinkSync(foreignTarget, join(agentDir, "bin", "subagent"));
-	loadWithAgentDir(agentDir);
-	const state = linkState(join(agentDir, "bin", "subagent"));
-	check("leaves a foreign live link alone", state.target === realpathSync(foreignTarget), `-> ${state.target}`);
+// ---------------------------------------------------------------------------
+// 1. The CLI link
+// ---------------------------------------------------------------------------
 
-	// A plain file must not be replaced either.
-	const agentDir2 = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
-	mkdirSync(join(agentDir2, "bin"), { recursive: true });
-	writeFileSync(join(agentDir2, "bin", "subagent"), "not ours\n");
-	loadWithAgentDir(agentDir2);
-	check(
-		"leaves a plain file alone",
-		linkState(join(agentDir2, "bin", "subagent")).kind === "dangling" === false,
-	);
-	rmSync(agentDir, { recursive: true, force: true });
-	rmSync(agentDir2, { recursive: true, force: true });
-}
+const variants = [
+	{ name: "source", load: source, cli: join(packageDir, "subagent.ts") },
+	...(built ? [{ name: "built", load: built, cli: join(packageDir, "dist", "subagent.js") }] : []),
+];
 
-{
-	// A dangling link is the case this exists to repair.
-	const agentDir = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
-	mkdirSync(join(agentDir, "bin"), { recursive: true });
-	symlinkSync(join(agentDir, "gone", "subagent.ts"), join(agentDir, "bin", "subagent"));
-	loadWithAgentDir(agentDir);
-	const state = linkState(join(agentDir, "bin", "subagent"));
-	check("repairs a dangling link", state.kind === "resolves" && state.target === realpathSync(cliPath));
-	rmSync(agentDir, { recursive: true, force: true });
+for (const variant of variants) {
+	console.log(`\n1. CLI link (${variant.name})`);
+
+	{
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
+		const link = join(agentDir, "bin", "subagent");
+		loadWithAgentDir(variant.load, agentDir);
+		const state = linkState(link);
+		check(
+			"created when absent, pointing at the right entry",
+			state.kind === "resolves" && state.target === realpathSync(variant.cli),
+			`${state.kind}${state.target ? ` -> ${state.target.replace(packageDir, "<pkg>")}` : ""}`,
+		);
+		loadWithAgentDir(variant.load, agentDir);
+		check("idempotent on a second load", linkState(link).kind === "resolves");
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+
+	{
+		// A link owned by something else, pointing at a live file, must survive untouched.
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
+		const foreignTarget = join(agentDir, "someone-elses-cli");
+		writeFileSync(foreignTarget, "#!/bin/sh\n");
+		mkdirSync(join(agentDir, "bin"), { recursive: true });
+		symlinkSync(foreignTarget, join(agentDir, "bin", "subagent"));
+		loadWithAgentDir(variant.load, agentDir);
+		const state = linkState(join(agentDir, "bin", "subagent"));
+		check("leaves a foreign live link alone", state.target === realpathSync(foreignTarget));
+
+		// A plain file must not be replaced either.
+		const agentDir2 = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
+		mkdirSync(join(agentDir2, "bin"), { recursive: true });
+		writeFileSync(join(agentDir2, "bin", "subagent"), "not ours\n");
+		loadWithAgentDir(variant.load, agentDir2);
+		check("leaves a plain file alone", linkState(join(agentDir2, "bin", "subagent")).kind === "dangling" === false);
+		rmSync(agentDir, { recursive: true, force: true });
+		rmSync(agentDir2, { recursive: true, force: true });
+	}
+
+	{
+		// A dangling link is the case this exists to repair.
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
+		mkdirSync(join(agentDir, "bin"), { recursive: true });
+		symlinkSync(join(agentDir, "gone", "subagent.ts"), join(agentDir, "bin", "subagent"));
+		loadWithAgentDir(variant.load, agentDir);
+		const state = linkState(join(agentDir, "bin", "subagent"));
+		check("repairs a dangling link", state.kind === "resolves" && state.target === realpathSync(variant.cli));
+		rmSync(agentDir, { recursive: true, force: true });
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +193,7 @@ if (process.env.HERDR_ENV !== "1" || !process.env.HERDR_PANE_ID) {
 		}),
 	);
 
-	const pi = loadWithAgentDir(agentDir);
+	const pi = loadWithAgentDir(source, agentDir);
 	const ctx = fakeCtx(sessionId);
 
 	check("registers /subagent", pi.commands.has("subagent"));

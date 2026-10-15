@@ -33,6 +33,7 @@ import {
 	listManifests,
 	removeRunDir,
 	runDisplayName,
+	siblingEntry,
 	type InboxMessage,
 	type RunManifest,
 } from "./shared.ts";
@@ -60,8 +61,9 @@ const METRICS_SOURCE = "pi-subagent";
  */
 function ensureCliOnPath(): void {
 	try {
-		const cli = join(packageDir, "subagent.ts");
-		if (!existsSync(cli)) return;
+		// Compiled when published, TypeScript in a development checkout.
+		const cli = siblingEntry(packageDir, "subagent");
+		if (!cli) return;
 		const link = join(getAgentDir(), "bin", "subagent");
 
 		let entryExists = true;
