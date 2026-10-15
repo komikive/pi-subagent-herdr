@@ -188,12 +188,13 @@ if (process.env.HERDR_ENV !== "1" || !process.env.HERDR_PANE_ID) {
 
 	await pi.handlers.get("session_start")?.[0]?.({}, ctx);
 	const widget = ctx.ui.widget;
+	const line = Array.isArray(widget) ? widget.join("") : "";
 	check("widget rendered for a live run", Array.isArray(widget), JSON.stringify(widget));
-	check(
-		"widget names the run and its status",
-		Array.isArray(widget) && /widget-probe:(working|idle|done|blocked|unknown)/.test(widget.join("")),
-		Array.isArray(widget) ? widget.join("") : "",
-	);
+	check("widget names the run", /widget-probe/.test(line), line);
+	// A healthy run shows its elapsed time in the status colour instead of a status word, so the
+	// common case stays short and only an exception needs to spell itself out.
+	check("healthy run shows elapsed time and no status word", /widget-probe \d+[smh]\b/.test(line), line);
+	check("healthy run carries no status word", !/working/.test(line), line);
 
 	await pi.handlers.get("session_shutdown")?.[0]?.({ reason: "quit" }, ctx);
 	check("widget cleared on shutdown", ctx.ui.widget === undefined);

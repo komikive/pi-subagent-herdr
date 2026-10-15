@@ -4,3 +4,8 @@ node_modules/
 
 # Internal design notes. Not part of the published project.
 DESIGN.md
+
+# Not shipped: every surveyed Pi package omits it, and it would pin the whole transitive
+# tree of a dependency used only for type checking. The Pi packages themselves are pinned
+# exactly in devDependencies.
+package-lock.json

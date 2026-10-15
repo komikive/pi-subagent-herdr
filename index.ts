@@ -155,11 +155,25 @@ export default function subagentExtension(pi: ExtensionAPI) {
 	if (!runDir) {
 		pi.on("resources_discover", () => ({ skillPaths: [join(packageDir, "skills")] }));
 
-		let widgetTimer: ReturnType<typeof setInterval> | undefined;
-		let widgetContext: ExtensionContext | undefined;
-		let unsubscribe: (() => void) | undefined;
-		let subscribedKey = "";
-		const announcedBlocked = new Set<string>();
+	let widgetTimer: ReturnType<typeof setInterval> | undefined;
+	let widgetContext: ExtensionContext | undefined;
+	let unsubscribe: (() => void) | undefined;
+	let subscribedKey = "";
+	const announcedBlocked = new Set<string>();
+	// When each run was last observed entering `working`, so the widget can show how long it
+	// has been going. Seeded on first sight, because a run may already be working before this
+	// process ever sees a transition.
+	const workingSince = new Map<string, number>();
+
+	/** `45s`, `2m`, `1h04m` — compact enough for a status line. */
+	function formatElapsed(ms: number): string {
+		const seconds = Math.max(0, Math.floor(ms / 1000));
+		if (seconds < 60) return `${seconds}s`;
+		const minutes = Math.floor(seconds / 60);
+		if (minutes < 60) return `${minutes}m`;
+		const hours = Math.floor(minutes / 60);
+		return `${hours}h${String(minutes % 60).padStart(2, "0")}m`;
+	}
 
 		const liveRuns = (ctx: ExtensionContext, agents: Map<string, HerdrAgent>): Array<{ manifest: RunManifest; agent: HerdrAgent }> => {
 			const runs: Array<{ manifest: RunManifest; agent: HerdrAgent }> = [];
@@ -196,20 +210,34 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 			const visible = runs.slice(0, 5).map(({ manifest, agent }) => {
 				const status = agent.agent_status;
-				const label = manifest.name ?? manifest.handle;
+				const color = statusColor(status);
+				const parts: string[] = [manifest.name ?? manifest.handle];
+
+				// The elapsed time carries the status colour while a run is healthy, so the common
+				// case stays short and only an exception needs a word.
+				if (status === "working") {
+					const since = workingSince.get(manifest.paneId) ?? Date.now();
+					workingSince.set(manifest.paneId, since);
+					parts.push(ctx.ui.theme.fg(color, formatElapsed(Date.now() - since)));
+				} else {
+					workingSince.delete(manifest.paneId);
+					const word = status === "blocked" ? ctx.ui.theme.bold("BLOCKED") : status;
+					parts.push(ctx.ui.theme.fg(color, word));
+				}
+
 				const metrics: string[] = [];
 				if (agent.tokens?.ctx) metrics.push(agent.tokens.ctx);
 				if (agent.tokens?.cost) metrics.push(`$${agent.tokens.cost}`);
-				const suffix = metrics.length > 0 ? ` ${ctx.ui.theme.fg("dim", metrics.join(" "))}` : "";
-				const marker = status === "blocked" ? "!" : "";
-				return ctx.ui.theme.fg(statusColor(status), `${label}:${status}${marker}`) + suffix;
+				if (metrics.length > 0) parts.push(ctx.ui.theme.fg("dim", metrics.join(" ")));
+
+				return parts.join(" ");
 			});
 			if (runs.length > visible.length) {
 				visible.push(ctx.ui.theme.fg("muted", `+${runs.length - visible.length}`));
 			}
 			ctx.ui.setWidget(
 				"subagents",
-				[ctx.ui.theme.fg("dim", "subagents: ") + visible.join(ctx.ui.theme.fg("dim", " | "))],
+				[ctx.ui.theme.fg("dim", "subagents ") + visible.join(ctx.ui.theme.fg("dim", "  │  "))],
 				{ placement: "belowEditor" },
 			);
 		};
@@ -243,7 +271,12 @@ export default function subagentExtension(pi: ExtensionAPI) {
 					if (event.event !== "pane.agent_status_changed") return;
 					const paneId = event.data.pane_id;
 					const status = event.data.agent_status;
-					if (typeof paneId !== "string" || status !== "blocked") return;
+					if (typeof paneId !== "string") return;
+					// A status change is what starts and stops the clock, so a `send` that begins a
+					// new turn resets the elapsed time instead of inheriting the run's age.
+					if (status === "working") workingSince.set(paneId, Date.now());
+					else if (typeof status === "string") workingSince.delete(paneId);
+					if (status !== "blocked") return;
 					// A blocked child is stalled on an approval prompt. It is the one state
 					// tmux could never report, so surface it loudly but only once per streak.
 					if (announcedBlocked.has(paneId)) return;
@@ -386,6 +419,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 			widgetContext = undefined;
 			subscribedKey = "";
 			announcedBlocked.clear();
+			workingSince.clear();
 			unsubscribe?.();
 			unsubscribe = undefined;
 			ctx.ui.setWidget("subagents", undefined);
