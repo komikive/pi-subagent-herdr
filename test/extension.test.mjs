@@ -172,7 +172,10 @@ if (process.env.HERDR_ENV !== "1" || !process.env.HERDR_PANE_ID) {
 			model: "test",
 			thinking: "off",
 			childSessionFile: join(runDir, "session.jsonl"),
-			createdAt: new Date().toISOString(),
+			// Deliberately older than now. The widget must measure from when the prompt was
+			// dispatched, not from when it started watching, so a reload does not reset the clock.
+			lastPromptAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+			createdAt: new Date(Date.now() - 9 * 60_000).toISOString(),
 			updatedAt: new Date().toISOString(),
 		}),
 	);
@@ -193,7 +196,7 @@ if (process.env.HERDR_ENV !== "1" || !process.env.HERDR_PANE_ID) {
 	check("widget names the run", /widget-probe/.test(line), line);
 	// A healthy run shows its elapsed time in the status colour instead of a status word, so the
 	// common case stays short and only an exception needs to spell itself out.
-	check("healthy run shows elapsed time and no status word", /widget-probe \d+[smh]\b/.test(line), line);
+	check("elapsed is measured from the prompt, not from load time", /widget-probe 3m\b/.test(line), line);
 	check("healthy run carries no status word", !/working/.test(line), line);
 
 	await pi.handlers.get("session_shutdown")?.[0]?.({ reason: "quit" }, ctx);

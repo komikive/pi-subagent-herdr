@@ -36,6 +36,12 @@ export interface RunManifest {
 	launchArgs?: string[];
 
 	childSessionFile: string;
+	/**
+	 * When the current turn's prompt was dispatched. The widget measures elapsed time from here
+	 * rather than from an observed status change: this survives a reload, needs no event
+	 * tracking, and is not disturbed by unrelated status events such as metrics reports.
+	 */
+	lastPromptAt?: string;
 	createdAt: string;
 	updatedAt: string;
 }

@@ -368,6 +368,7 @@ async function spawnSubagent(args: string[]): Promise<void> {
 		thinking,
 		launchArgs,
 		childSessionFile: sessionFile,
+		lastPromptAt: now,
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -517,7 +518,11 @@ function sendSubagent(args: string[]): void {
 	renameSync(temporary, target);
 
 	const status = agent.agent_status;
-	const verb = followUp && status === "working" ? "Queued follow-up for" : isSettled(status) ? "Prompted" : "Steered";
+	const settled = isSettled(status);
+	// Only a settled agent starts a new turn. Steering into a running one leaves the elapsed
+	// timer alone, because that work is part of the turn already in progress.
+	if (settled) updateManifest(manifest.handle, { lastPromptAt: new Date().toISOString() });
+	const verb = followUp && !settled ? "Queued follow-up for" : settled ? "Prompted" : "Steered";
 	process.stdout.write(`${verb} ${runDisplayName(manifest)}\n`);
 }
 

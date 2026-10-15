@@ -160,10 +160,6 @@ export default function subagentExtension(pi: ExtensionAPI) {
 	let unsubscribe: (() => void) | undefined;
 	let subscribedKey = "";
 	const announcedBlocked = new Set<string>();
-	// When each run was last observed entering `working`, so the widget can show how long it
-	// has been going. Seeded on first sight, because a run may already be working before this
-	// process ever sees a transition.
-	const workingSince = new Map<string, number>();
 
 	/** `45s`, `2m`, `1h04m` — compact enough for a status line. */
 	function formatElapsed(ms: number): string {
@@ -214,13 +210,14 @@ export default function subagentExtension(pi: ExtensionAPI) {
 				const parts: string[] = [manifest.name ?? manifest.handle];
 
 				// The elapsed time carries the status colour while a run is healthy, so the common
-				// case stays short and only an exception needs a word.
+				// case stays short and only an exception needs a word. It is measured from the
+				// manifest, which records when this turn's prompt was dispatched.
 				if (status === "working") {
-					const since = workingSince.get(manifest.paneId) ?? Date.now();
-					workingSince.set(manifest.paneId, since);
-					parts.push(ctx.ui.theme.fg(color, formatElapsed(Date.now() - since)));
+					const startedAt = Date.parse(manifest.lastPromptAt ?? manifest.createdAt);
+					if (Number.isFinite(startedAt)) {
+						parts.push(ctx.ui.theme.fg(color, formatElapsed(Date.now() - startedAt)));
+					}
 				} else {
-					workingSince.delete(manifest.paneId);
 					const word = status === "blocked" ? ctx.ui.theme.bold("BLOCKED") : status;
 					parts.push(ctx.ui.theme.fg(color, word));
 				}
@@ -271,12 +268,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 					if (event.event !== "pane.agent_status_changed") return;
 					const paneId = event.data.pane_id;
 					const status = event.data.agent_status;
-					if (typeof paneId !== "string") return;
-					// A status change is what starts and stops the clock, so a `send` that begins a
-					// new turn resets the elapsed time instead of inheriting the run's age.
-					if (status === "working") workingSince.set(paneId, Date.now());
-					else if (typeof status === "string") workingSince.delete(paneId);
-					if (status !== "blocked") return;
+					if (typeof paneId !== "string" || status !== "blocked") return;
 					// A blocked child is stalled on an approval prompt. It is the one state
 					// tmux could never report, so surface it loudly but only once per streak.
 					if (announcedBlocked.has(paneId)) return;
@@ -419,7 +411,6 @@ export default function subagentExtension(pi: ExtensionAPI) {
 			widgetContext = undefined;
 			subscribedKey = "";
 			announcedBlocked.clear();
-			workingSince.clear();
 			unsubscribe?.();
 			unsubscribe = undefined;
 			ctx.ui.setWidget("subagents", undefined);
