@@ -24,7 +24,7 @@
 	},
 	"scripts": {
 		"check": "tsc --noEmit",
-		"test": "node test/subscription.test.mjs"
+		"test": "node test/subscription.test.mjs && node test/extension.test.mjs"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

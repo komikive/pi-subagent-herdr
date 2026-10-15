@@ -13,7 +13,7 @@
  * running and resuming the session re-adopts them.
  */
 
-import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext, keyHint } from "@earendil-works/pi-coding-agent";
@@ -28,6 +28,7 @@ import {
 	type HerdrSubscriptionEvent,
 } from "./herdr.ts";
 import {
+	getAgentDir,
 	inboxDir,
 	listManifests,
 	removeRunDir,
@@ -39,6 +40,56 @@ import {
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const CHILD_ENV = "PI_SUBAGENT_RUN_DIR";
 const METRICS_SOURCE = "pi-subagent";
+
+/**
+ * Publish the bundled CLI as `subagent` on Pi's bin directory.
+ *
+ * Pi installs a package's extension but not its `bin` entries, and `~/.pi/agent/bin` is the
+ * directory Pi puts on PATH for exactly this purpose. Without a link the bundled skill would
+ * describe commands that cannot be run. This is why a plain `pi install` is the whole
+ * installation.
+ *
+ * Deliberately conservative:
+ * - Idempotent, so loading this extension repeatedly changes nothing.
+ * - An entry that resolves to something else is left alone. A project-local install and a
+ *   global install must not fight over the same name, and a user's own link outranks ours.
+ * - A dangling link is ours to repair, because pointing at a package that has since moved is
+ *   the one failure mode this exists to fix.
+ * - Any failure is swallowed. A convenience for the CLI must never stop the extension itself
+ *   from loading.
+ */
+function ensureCliOnPath(): void {
+	try {
+		const cli = join(packageDir, "subagent.ts");
+		if (!existsSync(cli)) return;
+		const link = join(getAgentDir(), "bin", "subagent");
+
+		let entryExists = true;
+		try {
+			lstatSync(link);
+		} catch {
+			entryExists = false;
+		}
+
+		if (entryExists) {
+			let resolved: string | undefined;
+			try {
+				// Throws for a dangling link, which is precisely the case worth repairing.
+				resolved = realpathSync(link);
+			} catch {
+				resolved = undefined;
+			}
+			if (resolved === undefined) unlinkSync(link);
+			else if (resolved === realpathSync(cli)) return;
+			else return; // A live entry owned by someone else.
+		}
+
+		mkdirSync(dirname(link), { recursive: true, mode: 0o700 });
+		symlinkSync(cli, link);
+	} catch {
+		// Ignored on purpose; see above.
+	}
+}
 
 function isInboxMessage(value: unknown): value is InboxMessage {
 	if (typeof value !== "object" || value === null) return false;
@@ -95,6 +146,7 @@ function installBlockedBridge(pi: ExtensionAPI): void {
 
 export default function subagentExtension(pi: ExtensionAPI) {
 	const runDir = process.env[CHILD_ENV];
+	ensureCliOnPath();
 	installBlockedBridge(pi);
 
 	// =========================================================================

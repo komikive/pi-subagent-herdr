@@ -46,22 +46,38 @@ herdr integration install pi
 The extension and the `subagent` CLI are two halves of the same package, and both are needed.
 
 ```sh
-git clone https://github.com/komikive/pi-subagent-herdr ~/dev/pi-subagent-herdr
-ln -s ~/dev/pi-subagent-herdr ~/.pi/agent/extensions/subagent
-ln -s ../extensions/subagent/subagent.ts ~/.pi/agent/bin/subagent
+pi install git:github.com/komikive/pi-subagent-herdr
 ```
 
-Then run `/reload` in an existing Pi session. The extension contributes its bundled skill
-automatically, and `subagent doctor` should report a healthy environment.
+Then run `/reload` in an existing Pi session, and confirm the environment with `subagent doctor`.
+The extension contributes its bundled skill automatically.
 
-Why symlinks rather than a copy:
+Pi installs a package's extension but not its `bin` entries, so on load the extension links its own
+CLI into `~/.pi/agent/bin`, the directory Pi already puts on `PATH`. That link is created once and is
+idempotent. It never takes over a name something else already owns — your own link, a project-local
+install, or a plain file all win over it — and a link left dangling by a moved install is the one
+case it repairs.
 
-- Pi discovers extensions through symlinked directories, so the git checkout can live anywhere you
-  like and `/reload` still picks up your edits.
-- `~/.pi/agent/bin` is already on `PATH` inside Pi's bash tool, so the CLI resolves as `subagent`.
+To manage that link yourself instead, point it at `subagent.ts` inside the installed package. The
+path follows `PI_CODING_AGENT_DIR`, which defaults to `~/.pi/agent`:
 
-This is the tested path. `pi install` is not used because it does not link a package's `bin` entries
-onto `PATH`, and the bundled skill depends on `subagent` being callable.
+```sh
+ln -s "$HOME/.pi/agent/git/github.com/komikive/pi-subagent-herdr/subagent.ts" \
+      "$HOME/.pi/agent/bin/subagent"
+```
+
+### Working on the extension itself
+
+Clone it wherever you like and link the directory in. Pi discovers extension directories through
+symlinks, so `/reload` picks up your edits without a reinstall:
+
+```sh
+git clone https://github.com/komikive/pi-subagent-herdr ~/dev/pi-subagent-herdr
+ln -s ~/dev/pi-subagent-herdr ~/.pi/agent/extensions/subagent
+```
+
+`npm install && npm test` runs the checks. The extension test needs a Herdr pane and skips that half
+without one.
 
 ## Usage
 
