@@ -59,8 +59,9 @@ Why symlinks rather than a copy:
 - Pi discovers extensions through symlinked directories, so the git checkout can live anywhere you
   like and `/reload` still picks up your edits.
 - `~/.pi/agent/bin` is already on `PATH` inside Pi's bash tool, so the CLI resolves as `subagent`.
-- `pi install git:github.com/komikive/pi-subagent-herdr` also works for the extension half, but it
-  does not put the CLI on `PATH`, which the bundled skill depends on.
+
+This is the tested path. `pi install` is not used because it does not link a package's `bin` entries
+onto `PATH`, and the bundled skill depends on `subagent` being callable.
 
 ## Usage
 
