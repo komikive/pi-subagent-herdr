@@ -17,6 +17,7 @@ Herdr is agent-aware. It recognises Pi in a pane, tracks its lifecycle itself, a
 | Is the child alive? | `tmux has-session` (poll) | `pane.exited` event (push) |
 | What state is it in? | child self-reports to a JSON file | `agent_status`, authoritative |
 | **Is it stuck waiting for me?** | **unknown — no such concept** | **`blocked`** |
+| Waiting for a run to finish | poll `metadata.json` every 400ms | `pane.agent_status_changed` events |
 | Where is its transcript? | child writes it into metadata | `agent_session`, reported by Herdr |
 | What is it doing right now? | nothing — attach and look | `herdr agent read` |
 | How do I see it? | attach, suspending the parent TUI | `herdr agent focus` |
@@ -176,6 +177,10 @@ child Pi (in its own Herdr tab)
 **The manifest is not a state cache.** Herdr owns liveness, status, and identity. `~/.pi/agent/subagents/<handle>/metadata.json` only stores what Herdr cannot tell us: how the child was launched, which parent session it belongs to, and the transcript path this CLI assigned via `--session`. (Herdr does report an `agent_session` for a pane, and that is what its own sidebar tooling uses, but because the CLI pins the session file itself there is nothing to reconcile.)
 
 **Messages go through an inbox, not the terminal.** `herdr agent prompt` types into the pane, but Pi's follow-up semantics require `alt+enter`, which cannot be expressed that way. A directory of atomically-written JSON files supports exact `steer` versus `followUp` delivery and does not depend on the pane's terminal state.
+
+**`wait` is event-driven.** It subscribes to `pane.agent_status_changed`, `pane.exited`, and `pane.closed` for its target, so a long wait costs one socket instead of a `herdr agent get` process spawn every 400ms. A slow poll stays as a safety net, because a reconnect can drop the one transition being waited for. Measured on a 13-second wait: 2 herdr calls, against roughly 32 for the polling version. The child writes its own transcript, so a settled status can briefly precede the final message; that narrow window is re-checked quickly rather than falling through to the slow poll.
+
+**`spawn` decides readiness itself.** `herdr agent start` returns only once the agent is interactively idle, and a freshly started child is almost never idle — its task is already queued. That made spawn time a race, measured at both 4s and 32s for the same 25-second task, and a slow spawn serialises every parallel dispatch. The start call is now bounded and the agent is confirmed through the same liveness signal every other command uses.
 
 `subagent wait` reads the child's transcript and reconstructs the active branch by walking `parentId` back from the newest entry. Reading the last line would be wrong after compaction or branching.
 

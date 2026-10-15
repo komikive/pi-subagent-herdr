@@ -26,8 +26,9 @@ import {
 	readAgent,
 	renameTab,
 	reportMetadata,
-	sanitizeAgentName,
 	startAgent,
+	herdrSubscribe,
+	type AgentStatus,
 	type HerdrAgent,
 } from "./herdr.ts";
 import {
@@ -135,11 +136,36 @@ function requireHerdr(): void {
 	);
 }
 
+/**
+ * Wait until Herdr reports an agent in the pane.
+ *
+ * `herdr agent start` returns only once the agent is interactively *idle*, and our children
+ * are essentially never idle: the task is already queued, so they start working within
+ * milliseconds of the session opening. Whether `agent start` manages to catch the brief
+ * pre-task window is a race, which makes spawn time wildly non-deterministic — measured at
+ * both ~3s and ~32s for the same 25-second task, and a slow spawn serialises every
+ * parallel dispatch. Readiness is therefore decided here, from the same liveness signal
+ * every other command uses.
+ */
+async function waitForAgent(paneId: string, timeoutMs: number): Promise<HerdrAgent | undefined> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			const agent = listAgents().find((entry) => entry.pane_id === paneId);
+			if (agent) return agent;
+		} catch {
+			// A transient listing failure is retried until the deadline.
+		}
+		if (Date.now() >= deadline) return undefined;
+		await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+	}
+}
+
 // ---------------------------------------------------------------------------
 // spawn
 // ---------------------------------------------------------------------------
 
-function spawnSubagent(args: string[]): void {
+async function spawnSubagent(args: string[]): Promise<void> {
 	if (process.env[NESTED_GUARD_ENV]) fail("Nested subagents are disabled");
 	requireHerdr();
 
@@ -297,27 +323,32 @@ function spawnSubagent(args: string[]): void {
 		...launchArgs,
 	];
 
+	// A short limit here is deliberate, not a hang. Herdr starts the child and *then* waits
+	// for it to look idle; when it does not, the timeout is reported even though the child is
+	// healthy and working. Readiness is confirmed below instead.
+	//
+	// 4000 is the smallest value Herdr accepts: it rejects anything not strictly greater
+	// than 3000ms, and rejecting the argument means the child is never launched at all.
+	let startError: unknown;
 	try {
-		startAgent({ name: agentName, paneId: tab.paneId, args: piArgs });
+		startAgent({ name: agentName, paneId: tab.paneId, args: piArgs, timeoutMs: 4000 });
 	} catch (error) {
-		// `agent start` waits for the agent to become interactively idle, so a timeout does
-		// not prove the child failed. Check whether it is actually up before destroying it:
-		// tearing down a healthy, working subagent is far worse than reporting a late start.
-		const alive = listAgents().find((agent) => agent.pane_id === tab.paneId);
-		if (!alive) {
-			// Capture the child's terminal before discarding the pane; a real startup failure
-			// is usually visible there, and closing first destroys the evidence.
-			let detail = "";
-			try {
-				detail = readAgent(tab.paneId, 40).trim();
-			} catch {
-				// The pane may already be gone.
-			}
-			closePane(tab.paneId);
-			removeRunDir(handle);
-			const message = error instanceof Error ? error.message : String(error);
-			throw new Error(detail ? `${message}\n\nThe child terminal showed:\n\n${detail}` : message);
+		startError = error;
+	}
+
+	if (!(await waitForAgent(tab.paneId, 30_000))) {
+		// Capture the child's terminal before discarding the pane; a real startup failure is
+		// usually visible there, and closing first destroys the evidence.
+		let detail = "";
+		try {
+			detail = readAgent(tab.paneId, 40).trim();
+		} catch {
+			// The pane may already be gone.
 		}
+		closePane(tab.paneId);
+		removeRunDir(handle);
+		const message = startError instanceof Error ? startError.message : "the agent never appeared in its pane";
+		throw new Error(detail ? `${message}\n\nThe child terminal showed:\n\n${detail}` : message);
 	}
 
 	const now = new Date().toISOString();
@@ -526,6 +557,127 @@ function pruneSubagents(args: string[]): void {
 	process.stdout.write(`Pruned ${removed} finished subagent${removed === 1 ? "" : "s"}${where}\n`);
 }
 
+/** A run's status as this CLI sees it: Herdr's own statuses, plus "gone" for a dead pane. */
+type RunStatus = AgentStatus | "gone";
+
+/** What `decide` tells the wait loop to do next. */
+type Decision =
+	/** The run has finished; stop waiting. */
+	| "done"
+	/** Nothing to do until the status changes again. */
+	| "wait"
+	/** Something is expected imminently (a transcript about to be flushed); look again shortly. */
+	| "recheck";
+
+/**
+ * Wait for a run to reach a decided state, driven by Herdr events.
+ *
+ * The previous implementation asked Herdr for the status every 400ms. For a long wait that
+ * meant thousands of `herdr agent get` process spawns, plus a full re-parse of the child's
+ * transcript on every tick. Subscribing to `pane.agent_status_changed` inverts that: status
+ * arrives when it changes, and the transcript is only read once a run actually looks settled.
+ *
+ * A slow poll remains as a safety net. A dropped socket can lose the one transition being
+ * waited for, and `herdrSubscribe` reconnects without replaying history. When no socket is
+ * available at all, the poll becomes the primary mechanism and runs at the faster interval.
+ *
+ * `decide` returns a {@link Decision}, and throws to fail the wait outright.
+ */
+function awaitRun(
+	manifest: RunManifest,
+	deadlineMs: number,
+	decide: (status: RunStatus) => Decision,
+	onTimeout: () => Error,
+): Promise<void> {
+	const paneId = manifest.paneId;
+	const eventDriven = isInHerdr();
+
+	return new Promise<void>((resolve, reject) => {
+		let done = false;
+		let dispose = (): void => {};
+		let poll: ReturnType<typeof setInterval> | undefined;
+		let recheck: ReturnType<typeof setTimeout> | undefined;
+		let deadline: ReturnType<typeof setTimeout> | undefined;
+
+		const finish = (error?: Error): void => {
+			if (done) return;
+			done = true;
+			if (deadline) clearTimeout(deadline);
+			if (recheck) clearTimeout(recheck);
+			if (poll) clearInterval(poll);
+			dispose();
+			if (error) reject(error);
+			else resolve();
+		};
+
+		const consider = (status: RunStatus): void => {
+			if (done) return;
+			let decision: Decision;
+			try {
+				decision = decide(status);
+			} catch (error) {
+				finish(error instanceof Error ? error : new Error(String(error)));
+				return;
+			}
+
+			if (decision === "done") {
+				finish();
+				return;
+			}
+			// A status change is not the only thing that can settle a run: the transcript is
+			// written by the child, so an `idle` report can land before the reply is on disk.
+			// Without this, that race would fall through to the slow safety poll.
+			if (decision === "recheck" && recheck === undefined) {
+				recheck = setTimeout(() => {
+					recheck = undefined;
+					look();
+				}, 250);
+				recheck.unref?.();
+			}
+		};
+
+		const look = (): void => {
+			if (done) return;
+			try {
+				const agent = getAgent(paneId);
+				consider(agent ? agent.agent_status : "gone");
+			} catch (error) {
+				finish(error instanceof Error ? error : new Error(String(error)));
+			}
+		};
+
+		deadline = setTimeout(() => finish(onTimeout()), Math.max(0, deadlineMs - Date.now()));
+
+		if (eventDriven) {
+			dispose = herdrSubscribe(
+				() => [
+					{ type: "pane.agent_status_changed", pane_id: paneId },
+					{ type: "pane.exited" },
+					{ type: "pane.closed" },
+				],
+				(event) => {
+					// Every one of these events carries a pane id, so another pane's churn cannot
+					// end this wait.
+					if (event.data.pane_id !== paneId) return;
+					if (event.event === "pane.agent_status_changed") {
+						consider(event.data.agent_status as AgentStatus);
+						return;
+					}
+					consider("gone");
+				},
+			);
+		}
+
+		// Safety net only. A reconnect can lose the transition being waited for, and this bounds
+		// how long that stays unnoticed. It is deliberately slow because in the normal case it
+		// contributes nothing; without a socket it becomes the primary mechanism and runs fast.
+		poll = setInterval(look, eventDriven ? 10_000 : 400);
+
+		// The run may already have settled, or settled between subscribing and now.
+		look();
+	});
+}
+
 async function waitSubagent(args: string[]): Promise<void> {
 	const handle = args.shift();
 	if (!handle) usage();
@@ -538,45 +690,53 @@ async function waitSubagent(args: string[]): Promise<void> {
 	}
 
 	const manifest = getManifest(handle);
-	const deadline = Date.now() + timeoutSeconds * 1000;
 	let sawWorking = false;
-	// Give the transcript a moment to flush once the agent reports settled; the
-	// session file is written by the child, not by us.
 	let settledSince: number | undefined;
 
-	while (Date.now() < deadline) {
-		const agent = getAgent(manifest.paneId);
-		if (!agent) fail(`${handle} exited before finishing`);
-		const status = agent.agent_status;
-		if (status === "working") {
-			sawWorking = true;
-			settledSince = undefined;
-		}
-
-		if (status === "blocked") {
-			fail(`${handle} is blocked and needs input. Inspect it with: subagent focus ${handle}`);
-		}
-
-		if (isSettled(status) && pendingInboxCount(manifest.handle) === 0) {
-			settledSince ??= Date.now();
-			// `sawWorking` covers a run that started and finished between polls; the
-			// transcript check covers a run that was already settled when wait began.
-			const elapsed = Date.now() - settledSince;
-			if (countAssistantMessages(manifest.childSessionFile) > 0 || (!sawWorking && elapsed > 3000)) {
-				const message = readLatestAssistant(manifest.childSessionFile);
-				if (!message) fail(`${handle} finished without an assistant response`);
-				process.stdout.write(`${handle} finished\n\n${assistantText(message)}\n`);
-				if (message.stopReason === "error" || message.stopReason === "aborted") process.exitCode = 1;
-				return;
+	await awaitRun(
+		manifest,
+		Date.now() + timeoutSeconds * 1000,
+		(status) => {
+			if (status === "gone") fail(`${handle} exited before finishing`);
+			if (status === "blocked") {
+				fail(`${handle} is blocked and needs input. Inspect it with: subagent focus ${handle}`);
 			}
-			if (elapsed > 30000) fail(`${handle} reported ${status} but produced no assistant response`);
-		} else {
-			settledSince = undefined;
-		}
 
-		await new Promise((resolveDelay) => setTimeout(resolveDelay, 400));
-	}
-	fail(`Timed out after ${timeoutSeconds}s waiting for ${handle}`);
+			if (status === "working") {
+				sawWorking = true;
+				settledSince = undefined;
+				return "wait";
+			}
+
+			// `unknown` is not settled, and a queued message means another turn is still coming.
+			if (!isSettled(status) || pendingInboxCount(manifest.handle) > 0) {
+				settledSince = undefined;
+				return "wait";
+			}
+
+			settledSince ??= Date.now();
+			const settledFor = Date.now() - settledSince;
+
+			if (countAssistantMessages(manifest.childSessionFile) === 0) {
+				// Observed working but no reply yet: the child is almost certainly mid-write.
+				if (sawWorking && settledFor < 5000) return "recheck";
+				// Never observed working and still nothing: the child never got its task.
+				if (!sawWorking && settledFor > 30000) {
+					fail(
+						`${handle} reported ${status} for ${Math.round(settledFor / 1000)}s without producing a response`,
+					);
+				}
+				return "wait";
+			}
+
+			const message = readLatestAssistant(manifest.childSessionFile);
+			if (!message) fail(`${handle} finished without an assistant response`);
+			process.stdout.write(`${handle} finished\n\n${assistantText(message)}\n`);
+			if (message.stopReason === "error" || message.stopReason === "aborted") process.exitCode = 1;
+			return "done";
+		},
+		() => new Error(`Timed out after ${timeoutSeconds}s waiting for ${handle}`),
+	);
 }
 
 function doctorSubagent(args: string[]): void {
@@ -604,7 +764,7 @@ async function main(): Promise<void> {
 	const command = args.shift();
 	switch (command) {
 		case "spawn":
-			spawnSubagent(args);
+			await spawnSubagent(args);
 			break;
 		case "list":
 			listSubagents(args);
