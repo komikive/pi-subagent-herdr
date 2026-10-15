@@ -2,15 +2,6 @@ MIT License
 
 Copyright (c) 2026 komikive
 
-This project is a derivative work of badlogic/pi-subagent
-(https://github.com/badlogic/pi-subagent), Copyright (c) badlogic,
-whose command surface, control-inbox message channel, two-mode extension
-structure, and portions of the bundled skill documentation are reused here.
-
-Portions of this project are derived from that work and are used with
-attribution. See README.md for the full list of what was inherited and what
-was rewritten.
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

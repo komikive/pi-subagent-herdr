@@ -1,0 +1,44 @@
+# Attribution
+
+`pi-subagent-herdr` is a derivative work of
+[`badlogic/pi-subagent`](https://github.com/badlogic/pi-subagent) by
+[badlogic](https://github.com/badlogic).
+
+The following are inherited from that project:
+
+- The command surface: `spawn`, `send`, `wait`, `stop`, `rename`, and `list`,
+  including their argument names and semantics.
+- The control-inbox message channel (`inbox/*.json`, atomically written, ordered
+  by filename), and the `auto` versus `followUp` delivery distinction.
+- The two-mode extension structure: one file that serves both the parent UI and,
+  when `PI_SUBAGENT_RUN_DIR` is set, the child-side control bridge.
+- The launch-manifest idea of storing relaunch parameters and parent session
+  ownership, and the atomic write of that record.
+- The transcript reader that reconstructs the active branch by walking `parentId`
+  back from the newest entry, so compaction and branching cannot return a stale
+  assistant message.
+- Substantial portions of the prose in `skills/subagent/SKILL.md`, particularly
+  the tool-list and isolation-flag explanations.
+
+The following are new in this project:
+
+- The Herdr substrate throughout: tab-per-subagent topology, `herdr.ts`, the
+  socket event subscription, and the removal of the tmux lifecycle machinery.
+- Token, cost, and tool-count metrics reported through
+  `herdr pane report-metadata`.
+- `blocked` detection, including the `herdr:blocked` event emitter that Herdr's
+  own Pi integration listens for but does not itself provide.
+- The launch-manifest model where status, liveness, identity, and the child
+  session path all come from Herdr rather than from a state cache.
+- The `read`, `focus`, `doctor`, and `prune` commands, and name resolution
+  alongside handles.
+
+## Licensing note
+
+The upstream repository publishes no license file, so it grants no explicit
+redistribution terms. This project is distributed under the MIT license in the
+same spirit as [Pi](https://github.com/earendil-works/pi) itself, with
+attribution to the original author kept here and in `README.md`.
+
+If you are the upstream author and want different terms, please open an issue
+and it will be changed.

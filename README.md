@@ -180,21 +180,16 @@ Edit in place and run `/reload` in Pi. Children are fresh processes, so they pic
 
 ## Credits
 
-This project is a Herdr-native rewrite of [`badlogic/pi-subagent`](https://github.com/badlogic/pi-subagent) by
-[badlogic](https://github.com/badlogic), which drove tmux. The command surface (`spawn` / `send` / `wait` /
-`stop` / `rename` / `list`), the control-inbox message channel, the two-mode extension structure
-(one file serving both the parent UI and the child control bridge), and much of the wording in
-`skills/subagent/SKILL.md` originate there. The Herdr substrate, the observability layer, the metrics
-reporting, the `blocked` detection, and the launch-manifest model are new here.
+A Herdr-native derivative of [`badlogic/pi-subagent`](https://github.com/badlogic/pi-subagent) by
+[badlogic](https://github.com/badlogic), which drove tmux. The command surface, the control-inbox
+message channel, the two-mode extension structure, the active-branch transcript reader, and much of
+the wording in `skills/subagent/SKILL.md` come from there; the Herdr substrate, the observability
+layer, the metrics reporting, and the `blocked` detection are new here.
 
-The upstream repository publishes no license file, so it grants no explicit redistribution terms.
-This project is distributed under the MIT license in the same spirit as
-[Pi](https://github.com/earendil-works/pi) itself, with attribution to the original author kept in
-`README.md` and below. If you are the upstream author and want different terms, please open an issue.
+See [NOTICE](NOTICE) for the itemised breakdown. The upstream repository publishes no license file,
+so it grants no explicit redistribution terms; this project is MIT in the same spirit as
+[Pi](https://github.com/earendil-works/pi) itself, with attribution kept here and in `NOTICE`.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-Copyright (c) 2026 komikive. Contains material derived from `badlogic/pi-subagent`,
-Copyright (c) badlogic.
