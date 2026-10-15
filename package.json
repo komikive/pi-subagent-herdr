@@ -1,6 +1,6 @@
 {
 	"name": "pi-subagent-herdr",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Observable Pi subagents that run in Herdr tabs: delegate work, watch it live, and keep it running after the parent session exits.",
 	"keywords": [
 		"pi-package",
@@ -29,7 +29,7 @@
 		"node": ">=22.19"
 	},
 	"bin": {
-		"subagent": "./dist/subagent.js"
+		"subagent": "dist/subagent.js"
 	},
 	"pi": {
 		"extensions": [
