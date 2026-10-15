@@ -121,7 +121,14 @@ export default function subagentExtension(pi: ExtensionAPI) {
 		const refreshWidget = (): void => {
 			const ctx = widgetContext;
 			if (!ctx) return;
-			const runs = liveRuns(ctx, agentByPane());
+			let runs: Array<{ manifest: RunManifest; agent: HerdrAgent }>;
+			try {
+				runs = liveRuns(ctx, agentByPane());
+			} catch {
+				// A transient Herdr or filesystem failure must not take down the TUI, and must not
+				// be rendered as "no subagents". Keep whatever is on screen and retry next tick.
+				return;
+			}
 			if (runs.length === 0) {
 				ctx.ui.setWidget("subagents", undefined);
 				return;
@@ -157,9 +164,15 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 		/** Herdr needs one subscription entry per pane, so the set is rebuilt when it changes. */
 		const syncSubscription = (ctx: ExtensionContext): void => {
-			const paneIds = listManifests(ctx.sessionManager.getSessionId())
-				.map((manifest) => manifest.paneId)
-				.sort();
+			let paneIds: string[];
+			try {
+				paneIds = listManifests(ctx.sessionManager.getSessionId())
+					.map((manifest) => manifest.paneId)
+					.sort();
+			} catch {
+				// Leave the current subscription in place; the next tick will retry.
+				return;
+			}
 			const key = paneIds.join(",");
 			if (key === subscribedKey) return;
 			subscribedKey = key;
@@ -209,7 +222,16 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 				let target = requested ? runs.find((run) => run.handle === requested) : undefined;
 				if (!requested && ctx.mode === "tui") {
-					const agents = agentByPane();
+					let agents: Map<string, HerdrAgent>;
+					try {
+						agents = agentByPane();
+					} catch (error) {
+						ctx.ui.notify(
+							`Could not read subagent status: ${error instanceof Error ? error.message : String(error)}`,
+							"error",
+						);
+						return;
+					}
 					const items: SelectItem[] = runs.map((run) => {
 						const agent = agents.get(run.paneId);
 						const status = agent?.agent_status ?? "gone";
@@ -280,13 +302,20 @@ export default function subagentExtension(pi: ExtensionAPI) {
 		});
 
 		pi.on("session_start", (_event, ctx) => {
-			// Herdr panes outlive this session, so re-adopt whatever is still alive and
-			// drop manifests whose pane is gone. This replaces upstream's
-			// suspend-on-quit and relaunch-on-resume machinery.
-			const agents = agentByPane();
-			for (const manifest of listManifests(ctx.sessionManager.getSessionId())) {
-				if (agents.has(manifest.paneId)) continue;
-				removeRunDir(manifest.handle);
+			// Herdr panes outlive this session, so re-adopt whatever is still alive and drop
+			// manifests whose pane is gone. This replaces upstream's suspend-on-quit and
+			// relaunch-on-resume machinery.
+			//
+			// Only prune when the live panes could actually be enumerated: a failed listing must
+			// never be read as "nothing is running", which would delete every live manifest.
+			try {
+				const agents = agentByPane();
+				for (const manifest of listManifests(ctx.sessionManager.getSessionId())) {
+					if (agents.has(manifest.paneId)) continue;
+					removeRunDir(manifest.handle);
+				}
+			} catch {
+				// Herdr unreachable, or the runs directory unreadable. Leave everything alone.
 			}
 
 			if (!ctx.hasUI) return;

@@ -23,7 +23,8 @@
 		"extensions": ["./index.ts"]
 	},
 	"scripts": {
-		"check": "tsc --noEmit"
+		"check": "tsc --noEmit",
+		"test": "node test/subscription.test.mjs"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

@@ -57,7 +57,7 @@ Three additional built-in tools are available but off by default:
 
 Spawn prints the handle, the Herdr pane, and the attach command. Keep the handle for later commands.
 
-Subagents are owned by the Herdr server, not by your session. They survive `/reload`, and they keep running when this Pi session quits. Resuming the session re-adopts them automatically. They are only removed by `subagent stop` or `subagent prune`.
+Subagents are owned by the Herdr server, not by your session. They survive `/reload`, and they keep running when this Pi session quits. Resuming the session re-adopts them automatically. A run is removed by `subagent stop`, by `subagent prune`, or automatically on session start when its Herdr pane is already gone.
 
 ## Inspect
 
@@ -81,6 +81,7 @@ Statuses come from Herdr:
 | `idle` / `done` | The child finished its turn and is waiting. `done` is the same state when the tab has not been looked at yet. |
 | `blocked` | **The child is stalled on an approval or question prompt and needs the user.** Tell the user and point them at `subagent focus <handle>`. |
 | `unknown` | Herdr sees an agent but cannot classify it. Not proof of completion. |
+| `gone` | Herdr no longer hosts an agent in that pane. You may still see this for a run that has not been cleaned up yet. |
 
 ## Wait
 
@@ -113,9 +114,10 @@ Names are 1-64 characters and need not be unique. Messages are delivered through
 ```sh
 subagent stop <handle>
 subagent prune
+subagent prune --all
 ```
 
-`stop` closes the child's Herdr pane and removes its transcript. `prune` removes records whose pane is already gone.
+`stop` closes the child's Herdr pane and removes its transcript. `prune` removes records whose pane is already gone, limited to the current session. `prune --all` widens that to every session, which is not the default because a record is the only way a running pane can be re-adopted.
 
 Explicitly stop every subagent when it is no longer needed; do not leave finished subagents sitting in the sidebar. Keep an idle subagent alive only when concrete follow-up work is expected, then stop it afterward. Never close a Herdr pane you did not create through `subagent spawn`.
 

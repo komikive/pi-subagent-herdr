@@ -90,6 +90,8 @@ subagent spawn \
   --prompt "Run the targeted tests"
 ```
 
+The task reaches the child as its first inbox message, not as a command-line argument. `--file` contents are inlined into it, and `--cwd` selects the working directory (default: the current one).
+
 Restrict tools for a read-only investigation:
 
 ```sh
@@ -106,10 +108,14 @@ subagent rename a1b2c3 "error handling review"
 subagent send a1b2c3 "Focus on error handling"
 subagent send a1b2c3 --follow-up "Then summarize"
 subagent wait a1b2c3
+subagent wait a1b2c3 --timeout 300
 subagent focus a1b2c3
 subagent stop a1b2c3
 subagent prune
 ```
+
+Handles and names are both accepted as targets. A handle always wins; a name is only
+accepted when it identifies exactly one run.
 
 `/subagent` lists this session's runs and focuses the one you pick.
 
@@ -123,6 +129,7 @@ Status comes straight from Herdr:
 | `idle` / `done` | turn finished, waiting. `done` is the same state before the tab has been looked at |
 | `blocked` | **stalled on an approval or question prompt** |
 | `unknown` | Herdr sees an agent but cannot classify it; not proof of completion |
+| `gone` | The pane no longer hosts an agent. Applies to recorded runs that have not been cleaned up yet. |
 
 `blocked` is the state a tmux design cannot express. The extension surfaces it in the widget, in `subagent status`, and by failing `subagent wait` immediately instead of hanging until its timeout.
 
@@ -131,7 +138,7 @@ Status comes straight from Herdr:
 Optional spawn flags:
 
 - `--tools <names>`: comma-separated tool allowlist
-- `--no-extensions`: disable extension discovery. The subagent control bridge and Herdr's Pi integration are re-injected explicitly, so the child still works and is still tracked
+- `--no-extensions`: disable extension discovery. The subagent control bridge is re-injected explicitly, along with Herdr's Pi integration when it is installed, so the child still works and is still tracked
 - `--no-skills`: disable skills
 - `--no-prompt-templates`: disable prompt templates
 - `--no-context-files`: ignore repository instruction files
@@ -145,9 +152,9 @@ Subagents belong to the Herdr server, not to the Pi session that spawned them:
 - They survive `/reload`.
 - They keep running when the parent session quits. The parent does no teardown.
 - Resuming that session re-adopts them by matching the saved parent session id against live Herdr panes.
-- Records whose pane is gone are cleaned up on the next `session_start`, and `subagent prune` does it on demand.
+- Records whose pane is gone are cleaned up on the next `session_start`, and `subagent prune` does the same on demand for the current session. `subagent prune --all` widens that to every session, which is why it is not the default: a manifest is the only record of how to re-adopt a running pane.
 
-Only `subagent stop` closes a pane. Never close a Herdr pane by hand that `subagent spawn` created.
+`subagent spawn` closes the pane it just created if the child fails to start, and `subagent stop` closes a pane for any other reason. Never close a Herdr pane by hand that `subagent spawn` created.
 
 ## How it works
 
@@ -166,7 +173,7 @@ child Pi (in its own Herdr tab)
     └── metrics ........ pane.report-metadata → ctx tokens, tool count, cost
 ```
 
-**The manifest is not a state cache.** Herdr owns liveness, status, identity, and the child's session path. `~/.pi/agent/subagents/<handle>/metadata.json` only stores what Herdr cannot tell us: how the child was launched and which parent session it belongs to.
+**The manifest is not a state cache.** Herdr owns liveness, status, and identity. `~/.pi/agent/subagents/<handle>/metadata.json` only stores what Herdr cannot tell us: how the child was launched, which parent session it belongs to, and the transcript path this CLI assigned via `--session`. (Herdr does report an `agent_session` for a pane, and that is what its own sidebar tooling uses, but because the CLI pins the session file itself there is nothing to reconcile.)
 
 **Messages go through an inbox, not the terminal.** `herdr agent prompt` types into the pane, but Pi's follow-up semantics require `alt+enter`, which cannot be expressed that way. A directory of atomically-written JSON files supports exact `steer` versus `followUp` delivery and does not depend on the pane's terminal state.
 

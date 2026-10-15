@@ -79,7 +79,7 @@ function usage(): never {
   subagent wait <handle> [--timeout <seconds>]
   subagent focus <handle>
   subagent stop <handle>
-  subagent prune
+  subagent prune [--all]
   subagent doctor`);
 }
 
@@ -277,7 +277,10 @@ function spawnSubagent(args: string[]): void {
 		mkdirSync(queueDir, { recursive: true, mode: 0o700 });
 		const payload: InboxMessage = { message: task, delivery: "auto" };
 		const target = join(queueDir, `0000000000000-${handle}.json`);
-		writeFileSync(target, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
+		// Same tmp+rename discipline as `send`, so a reader cannot observe a partial record.
+		const temporary = `${target}.tmp`;
+		writeFileSync(temporary, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
+		renameSync(temporary, target);
 	}
 
 	const piArgs = [
@@ -503,15 +506,24 @@ async function stopSubagent(args: string[]): Promise<void> {
 }
 
 function pruneSubagents(args: string[]): void {
-	if (args.length !== 0) usage();
+	let all = false;
+	for (const arg of args) {
+		if (arg !== "--all") usage();
+		all = true;
+	}
+	const sessionId = process.env.PI_SESSION_ID || undefined;
+	// Scoped to the caller's session by default. Pruning globally would silently delete
+	// another session's manifests, and those are the only record of how to re-adopt its panes.
+	const scope = all ? undefined : sessionId;
 	const agents = agentByPane();
 	let removed = 0;
-	for (const manifest of listManifests()) {
+	for (const manifest of listManifests(scope)) {
 		if (agents.has(manifest.paneId)) continue;
 		removeRunDir(manifest.handle);
 		removed++;
 	}
-	process.stdout.write(`Pruned ${removed} finished subagent${removed === 1 ? "" : "s"}\n`);
+	const where = all ? " (all sessions)" : sessionId ? "" : " (no session context, so all sessions)";
+	process.stdout.write(`Pruned ${removed} finished subagent${removed === 1 ? "" : "s"}${where}\n`);
 }
 
 async function waitSubagent(args: string[]): Promise<void> {
