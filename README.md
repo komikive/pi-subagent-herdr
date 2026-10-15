@@ -42,15 +42,24 @@ herdr integration install pi
 
 ## Install
 
+The extension and the `subagent` CLI are two halves of the same package, and both are needed.
+
 ```sh
-git clone <your-fork> ~/dev/pi-subagent-herdr
+git clone https://github.com/komikive/pi-subagent-herdr ~/dev/pi-subagent-herdr
 ln -s ~/dev/pi-subagent-herdr ~/.pi/agent/extensions/subagent
 ln -s ../extensions/subagent/subagent.ts ~/.pi/agent/bin/subagent
 ```
 
-Pi discovers extension directories through symlinks, so the git checkout stays where you want it while `/reload` picks up edits. `~/.pi/agent/bin` is already on `PATH` inside Pi's bash tool.
+Then run `/reload` in an existing Pi session. The extension contributes its bundled skill
+automatically, and `subagent doctor` should report a healthy environment.
 
-Then run `/reload` in an existing Pi session. The extension contributes its bundled skill automatically.
+Why symlinks rather than a copy:
+
+- Pi discovers extensions through symlinked directories, so the git checkout can live anywhere you
+  like and `/reload` still picks up your edits.
+- `~/.pi/agent/bin` is already on `PATH` inside Pi's bash tool, so the CLI resolves as `subagent`.
+- `pi install git:github.com/komikive/pi-subagent-herdr` also works for the extension half, but it
+  does not put the CLI on `PATH`, which the bundled skill depends on.
 
 ## Usage
 
