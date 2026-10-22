@@ -1,75 +1,68 @@
 # pi-subagent-herdr
 
-Observable, persistent Pi subagents that live in [Herdr](https://herdr.dev) tabs.
+运行在 [Herdr](https://herdr.dev) 标签页里的 Pi 子代理：可观测、可持久。
 
-Delegate a task to a separate Pi process with its own context. Watch it work from the Herdr sidebar, focus its tab to see the full interactive TUI, and let it keep running after you quit the parent session.
+把一项任务派给一个独立的 Pi 进程，它有自己的上下文。你可以在 Herdr 侧边栏看着它干活，聚焦它的标签页就是完整的交互式 TUI，而且父会话退出之后它照样继续跑。
 
-This is a Herdr-native fork of [`badlogic/pi-subagent`](https://github.com/badlogic/pi-subagent), which drove tmux.
+本项目是 [`badlogic/pi-subagent`](https://github.com/badlogic/pi-subagent) 的 Herdr 原生分支——上游用的是 tmux。
 
-## Why Herdr instead of tmux
+## 为什么用 Herdr 而不是 tmux
 
-tmux is a dumb terminal holder: it has no idea an agent is running inside it. That forces a tmux-based design to *infer* everything, and it cannot see the one thing that matters most — what the agent is actually doing.
+tmux 只是个哑终端容器，它不知道里面正跑着 agent。于是基于 tmux 的设计什么都得靠**推断**，而最要紧的那件事——agent 现在到底在干什么——它看不见。
 
-Herdr is agent-aware. It recognises Pi in a pane, tracks its lifecycle itself, and exposes events over a socket API. So a whole layer of guesswork disappears:
+Herdr 本身认识 agent。它能在 pane 里认出 Pi，自己跟踪生命周期，并通过 socket API 把事件推出来。于是一整层猜测就消失了：
 
-| What the parent needs | tmux | Herdr |
+| 父进程需要知道 | tmux 下怎么得到 | Herdr 下怎么得到 |
 |---|---|---|
-| Is the child alive? | `tmux has-session` (poll) | `pane.exited` event (push) |
-| What state is it in? | child self-reports to a JSON file | `agent_status`, authoritative |
-| **Is it stuck waiting for me?** | **unknown — no such concept** | **`blocked`** |
-| Waiting for a run to finish | poll `metadata.json` every 400ms | `pane.agent_status_changed` events |
-| Where is its transcript? | child writes it into metadata | `agent_session`, reported by Herdr |
-| What is it doing right now? | nothing — attach and look | `herdr agent read` |
-| How do I see it? | attach, suspending the parent TUI | `herdr agent focus` |
-| Who owns its lifetime? | the parent, which must suspend/relaunch it | the Herdr server |
+| 子进程还活着吗 | `tmux has-session`（轮询） | `pane.exited` 事件（推送） |
+| 它现在什么状态 | 子进程自己写进 JSON 文件 | `agent_status`，权威来源 |
+| **它是不是卡在等我？** | **不知道，没这个概念** | **`blocked`** |
+| 等一次运行跑完 | 每 400ms 轮询 `metadata.json` | `pane.agent_status_changed` 事件 |
+| 它的会话记录在哪 | 子进程写进 metadata | `agent_session`，由 Herdr 报告 |
+| 它此刻在干什么 | 没有，只能 attach 去看 | `herdr agent read` |
+| 我怎么看它 | attach，父 TUI 得先挂起 | `herdr agent focus` |
+| 生命周期归谁 | 父进程，得负责挂起和重启 | Herdr 服务端 |
 
-## Requirements
+## 环境要求
 
-- [Pi](https://github.com/earendil-works/pi) running **inside a Herdr pane**
-- Node.js 22.19 or newer
-- Herdr (tested against 0.9.3)
+- [Pi](https://github.com/earendil-works/pi) 运行在**Herdr 的 pane 内**
+- Node.js 22.19 或更高
+- Herdr（在 0.9.3 上验证过）
 
-Check everything at once:
+一次检查全部条件：
 
 ```sh
 subagent doctor
 ```
 
-`doctor` also warns when Herdr's own Pi integration is stale. Keep it current so Herdr can classify child state reliably:
+`doctor` 还会在 Herdr 自带的 Pi 集成过期时提醒你。保持它是最新的，Herdr 才能可靠地判断子进程状态：
 
 ```sh
 herdr integration install pi
 ```
 
-## Install
+## 安装
 
-The extension and the `subagent` CLI are two halves of the same package, and both are needed.
+扩展和 `subagent` CLI 是同一个包的两半，都必须装。
 
 ```sh
 pi install npm:pi-subagent-herdr
 ```
 
-Then run `/reload` in an existing Pi session, and confirm the environment with `subagent doctor`.
-The extension contributes its bundled skill automatically. `pi install git:github.com/komikive/pi-subagent-herdr` works too, though that route is not built, so it only carries the sources.
+然后在已打开的 Pi 会话里执行 `/reload`，并用 `subagent doctor` 确认环境。扩展会自动装载它自带的技能。`pi install git:github.com/komikive/pi-subagent-herdr` 也能装，但那一路没有构建产物，只带源码。
 
-Pi installs a package's extension but not its `bin` entries, so on load the extension links its own
-CLI into `~/.pi/agent/bin`, the directory Pi already puts on `PATH`. That link is created once and is
-idempotent. It never takes over a name something else already owns — your own link, a project-local
-install, or a plain file all win over it — and a link left dangling by a moved install is the one
-case it repairs.
+Pi 会安装包的扩展，但不会安装 `bin` 入口。所以扩展在加载时会把自带的 CLI 链到 `~/.pi/agent/bin`——也就是 Pi 已经放进 `PATH` 的那个目录。这个链接只创建一次且幂等：已经存在的名字它绝不抢占（你自己的链接、项目级安装、普通文件都优先于它），唯一会去修的是被移动过的安装留下的断链。
 
-To manage that link yourself instead, point it at the CLI inside the installed package. The path
-follows `PI_CODING_AGENT_DIR`, which defaults to `~/.pi/agent`:
+你也可以自己管理这个链接，直接指向已安装包里的 CLI。路径跟随 `PI_CODING_AGENT_DIR`，默认是 `~/.pi/agent`：
 
 ```sh
 ln -s "$HOME/.pi/agent/npm/node_modules/pi-subagent-herdr/dist/subagent.js" \
       "$HOME/.pi/agent/bin/subagent"
 ```
 
-### Working on the extension itself
+### 修改扩展本身
 
-Clone it wherever you like and link the directory in. Pi discovers extension directories through
-symlinks, so a rebuild plus `/reload` picks up your edits without a reinstall:
+把仓库克隆到任意位置，再把目录链进去。Pi 通过符号链接发现扩展目录，所以重新构建加 `/reload` 就能生效，不需要重装：
 
 ```sh
 git clone https://github.com/komikive/pi-subagent-herdr ~/dev/pi-subagent-herdr
@@ -77,26 +70,21 @@ cd ~/dev/pi-subagent-herdr && npm install
 ln -s ~/dev/pi-subagent-herdr ~/.pi/agent/extensions/subagent
 ```
 
-`npm run check`, `npm run build`, and `npm test` are the three steps. The extension test needs a
-Herdr pane and skips that half without one; it exercises both the source and, when built, the
-packaged form.
+三个命令分别是 `npm run check`、`npm run build`、`npm test`。扩展测试需要 Herdr pane，没有就跳过那一半；它同时覆盖源码形态和构建后的打包形态。
 
-`npm run build` bundles `dist/`, which is what npm publishes. The published bin has to be compiled
-JavaScript: Node refuses to strip types for files under `node_modules`
-(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), and `pi install` puts packages there, so a
-TypeScript bin would be dead on arrival for every npm user.
+`npm run build` 会把代码打包进 `dist/`，那才是 npm 上发布的内容。发布的 bin 必须是编译后的 JavaScript：Node 拒绝为 `node_modules` 下的文件剥离类型（`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`），而 `pi install` 正是把包装到那里，所以 TypeScript 的 bin 对所有 npm 用户都是装了就死。
 
-## Usage
+## 用法
 
-Spawn with a descriptive name, using the parent session's provider, model, and thinking level:
+分配任务时给个有意义的名字，默认沿用父会话的 provider、model 和 thinking 等级：
 
 ```sh
 subagent spawn --name review --prompt "Review the current diff independently"
 ```
 
-The name becomes the Herdr tab label, so the child shows up in your sidebar next to your own work. Your focus does not move.
+这个名字会变成 Herdr 的标签页标题，于是子代理就和你的工作并排出现在侧边栏里，而你的焦点不会被打断。
 
-Override the model configuration when needed:
+需要时覆盖模型配置：
 
 ```sh
 subagent spawn \
@@ -106,7 +94,7 @@ subagent spawn \
   --prompt "Find the relevant implementation"
 ```
 
-Provide multiple prompt fragments and files:
+提供多段 prompt 和文件：
 
 ```sh
 subagent spawn \
@@ -115,15 +103,15 @@ subagent spawn \
   --prompt "Run the targeted tests"
 ```
 
-The task reaches the child as its first inbox message, not as a command-line argument. `--file` contents are inlined into it, and `--cwd` selects the working directory (default: the current one).
+任务是作为第一条 inbox 消息送达子进程的，不走命令行参数。`--file` 的内容会被内联进去，`--cwd` 指定工作目录（默认当前目录）。
 
-Restrict tools for a read-only investigation:
+只读调查时限制可用工具：
 
 ```sh
 subagent spawn --tools read,grep,find,ls --prompt "Investigate the failure"
 ```
 
-Manage a run by its handle:
+用 handle 管理运行：
 
 ```sh
 subagent list
@@ -139,102 +127,95 @@ subagent stop a1b2c3
 subagent prune
 ```
 
-Handles and names are both accepted as targets. A handle always wins; a name is only
-accepted when it identifies exactly one run.
+handle 和名字都能作为目标。handle 永远优先；名字只在能唯一确定一次运行时才被接受。
 
-`/subagent` lists this session's runs and focuses the one you pick.
+`/subagent` 会列出当前会话的子代理，并把焦点切到你选中的那个。
 
-## Statuses
+## 状态
 
-Status comes straight from Herdr:
+状态直接来自 Herdr：
 
-| Status | Meaning |
+| 状态 | 含义 |
 |---|---|
-| `working` | producing work |
-| `idle` / `done` | turn finished, waiting. `done` is the same state before the tab has been looked at |
-| `blocked` | **stalled on an approval or question prompt** |
-| `unknown` | Herdr sees an agent but cannot classify it; not proof of completion |
-| `gone` | The pane no longer hosts an agent. Applies to recorded runs that have not been cleaned up yet. |
+| `working` | 正在产出 |
+| `idle` / `done` | 本轮结束，等待中。`done` 是同一个状态，只是标签页还没被看过 |
+| `blocked` | **卡在审批或提问对话框上** |
+| `unknown` | Herdr 看到了 agent 但无法分类；不能当作已完成 |
+| `gone` | 这个 pane 里已经没有 agent 了。适用于还没被清理的历史记录 |
 
-`blocked` is the state a tmux design cannot express. The extension surfaces it in the widget, in `subagent status`, and by failing `subagent wait` immediately instead of hanging until its timeout.
+`blocked` 是 tmux 那套设计表达不出来的状态。扩展会在 widget、`subagent status` 里显示它，并让 `subagent wait` 立刻失败，而不是一直挂到超时。
 
-## Isolation
+## 隔离
 
-Optional spawn flags:
+可选的 spawn 参数：
 
-- `--tools <names>`: comma-separated tool allowlist
-- `--no-extensions`: disable extension discovery. The subagent control bridge is re-injected explicitly, along with Herdr's Pi integration when it is installed, so the child still works and is still tracked
-- `--no-skills`: disable skills
-- `--no-prompt-templates`: disable prompt templates
-- `--no-context-files`: ignore repository instruction files
+- `--tools <names>`：逗号分隔的工具白名单
+- `--no-extensions`：关闭扩展发现。子代理的控制桥会被显式重新注入，Herdr 的 Pi 集成（如果已安装）也一样，所以子进程照常工作、照常被跟踪
+- `--no-skills`：关闭技能
+- `--no-prompt-templates`：关闭 prompt 模板
+- `--no-context-files`：忽略仓库的指令文件
 
-Nested subagents are disabled. Child sessions do not receive the subagent skill.
+嵌套子代理是禁用的。子会话不会加载 subagent 技能。
 
-## Lifetime
+## 生命周期
 
-Subagents belong to the Herdr server, not to the Pi session that spawned them:
+子代理属于 Herdr 服务端，不属于派发它的那个 Pi 会话：
 
-- They survive `/reload`.
-- They keep running when the parent session quits. The parent does no teardown.
-- Resuming that session re-adopts them by matching the saved parent session id against live Herdr panes.
-- Records whose pane is gone are cleaned up on the next `session_start`, and `subagent prune` does the same on demand for the current session. `subagent prune --all` widens that to every session, which is why it is not the default: a manifest is the only record of how to re-adopt a running pane.
+- 它们能挺过 `/reload`。
+- 父会话退出时它们继续跑，父进程不做任何清理动作。
+- 重新打开那个会话时，会按保存的父会话 id 与在线的 Herdr pane 比对，把它们认领回来。
+- pane 已经消失的记录会在下次 `session_start` 时清理；`subagent prune` 可以对当前会话按需做同样的事。`subagent prune --all` 会扩大到所有会话——这正是它不作为默认行为的原因：manifest 是重新认领一个运行中 pane 的唯一凭据。
 
-`subagent spawn` closes the pane it just created if the child fails to start, and `subagent stop` closes a pane for any other reason. Never close a Herdr pane by hand that `subagent spawn` created.
+如果子进程启动失败，`subagent spawn` 会关掉自己刚创建的那个 pane；其余情况下只有 `subagent stop` 会关 pane。不要手动关掉 `subagent spawn` 创建的 Herdr pane。
 
-## How it works
+## 工作原理
 
 ```
-parent Pi (in a Herdr pane)
-├── extension
-│   ├── widget ......... herdr agent list, joined with local manifests
-│   ├── socket ......... events.subscribe → instant status changes
+父 Pi（在 Herdr pane 里）
+├── 扩展
+│   ├── widget ......... herdr agent list，与本地 manifest 合并
+│   ├── socket ......... events.subscribe → 状态变化即时推送
 │   ├── /subagent ...... herdr agent focus
-│   └── blocked bridge . pi.events.emit("herdr:blocked", …)
+│   └── blocked 桥 ..... pi.events.emit("herdr:blocked", …)
 └── subagent CLI ....... herdr tab create / agent start / …
 
-child Pi (in its own Herdr tab)
-└── extension
-    ├── control bridge . drains inbox/ into user messages
-    └── metrics ........ pane.report-metadata → ctx tokens, tool count, cost
+子 Pi（在自己的 Herdr 标签页里）
+└── 扩展
+    ├── 控制桥 ......... 把 inbox/ 里的消息排空成用户消息
+    └── 指标 ........... pane.report-metadata → 上下文字数、工具数、花费
 ```
 
-**The manifest is not a state cache.** Herdr owns liveness, status, and identity. `~/.pi/agent/subagents/<handle>/metadata.json` only stores what Herdr cannot tell us: how the child was launched, which parent session it belongs to, and the transcript path this CLI assigned via `--session`. (Herdr does report an `agent_session` for a pane, and that is what its own sidebar tooling uses, but because the CLI pins the session file itself there is nothing to reconcile.)
+**manifest 不是状态缓存。** 存活、状态、身份都归 Herdr 管。`~/.pi/agent/subagents/<handle>/metadata.json` 只存 Herdr 告诉不了我们的东西：子进程是怎么启动的、属于哪个父会话、以及这个 CLI 通过 `--session` 指定的会话记录路径。（Herdr 确实会为一个 pane 报告 `agent_session`，它自家的侧边栏工具用的就是这个值；但因为 CLI 自己钉死了会话文件，这里没有需要对账的东西。）
 
-**Messages go through an inbox, not the terminal.** `herdr agent prompt` types into the pane, but Pi's follow-up semantics require `alt+enter`, which cannot be expressed that way. A directory of atomically-written JSON files supports exact `steer` versus `followUp` delivery and does not depend on the pane's terminal state.
+**消息走 inbox，不走终端。** `herdr agent prompt` 是往 pane 里打字，但 Pi 的 follow-up 语义需要 `alt+enter`，这种方式表达不出来。一个由原子写入的 JSON 文件组成的目录可以精确区分 `steer` 和 `followUp` 投递，也不依赖 pane 的终端状态。
 
-**`wait` is event-driven.** It subscribes to `pane.agent_status_changed`, `pane.exited`, and `pane.closed` for its target, so a long wait costs one socket instead of a `herdr agent get` process spawn every 400ms. A slow poll stays as a safety net, because a reconnect can drop the one transition being waited for. Measured on a 13-second wait: 2 herdr calls, against roughly 32 for the polling version. The child writes its own transcript, so a settled status can briefly precede the final message; that narrow window is re-checked quickly rather than falling through to the slow poll.
+**`wait` 是事件驱动的。** 它会为目标的 `pane.agent_status_changed`、`pane.exited`、`pane.closed` 建立订阅，所以长时间等待只花一个 socket，而不是每 400ms 派生一次 `herdr agent get` 进程。仍保留一个低频轮询兜底，因为重连可能丢掉正在等待的那一次状态变化。实测 13 秒的等待：2 次 herdr 调用，轮询版约 32 次。会话记录是子进程自己写的，所以"已完成"的状态可能比最终消息早到一点；这个很窄的窗口会被快速复查，而不是掉到慢速轮询里去。
 
-**`spawn` decides readiness itself.** `herdr agent start` returns only once the agent is interactively idle, and a freshly started child is almost never idle — its task is already queued. That made spawn time a race, measured at both 4s and 32s for the same 25-second task, and a slow spawn serialises every parallel dispatch. The start call is now bounded and the agent is confirmed through the same liveness signal every other command uses.
+**`spawn` 自己决定什么时候算就绪。** `herdr agent start` 只在 agent 变得可交互空闲时才返回，而刚启动的子进程几乎从不空闲——它的任务已经在队列里了。这让 spawn 耗时变成一场竞态：同一个 25 秒的任务，实测有 4 秒也有 32 秒的情况，而慢的 spawn 会让每一次并行派发串行化。现在启动调用有明确上限，就绪与否通过和其他所有命令一样的存活信号来确认。
 
-`subagent wait` reads the child's transcript and reconstructs the active branch by walking `parentId` back from the newest entry. Reading the last line would be wrong after compaction or branching.
+`subagent wait` 读取子进程的会话记录，并沿着 `parentId` 从最新一条往回走，重建当前活跃分支。只读最后一行在压缩或分支之后会是错的。
 
-### A note on `blocked`
+### 关于 `blocked` 的说明
 
-Herdr's Pi integration listens for a `herdr:blocked` event on Pi's event bus, but nothing in Pi or in that integration emits it — so a Pi pane sitting on a dialog keeps reading as `working`. Herdr also skips its own screen detection for Pi (`full_lifecycle_hook_authority`), so the reported state is the only signal there is.
+Herdr 的 Pi 集成会监听 Pi 事件总线上的 `herdr:blocked` 事件，但 Pi 本身和那个集成里都没有任何东西去发它——所以停在对话框上的 Pi pane 会一直报告成 `working`。而 Herdr 对 Pi 又跳过自己的屏幕检测（`full_lifecycle_hook_authority`），于是上报的状态就是唯一的信号。
 
-`index.ts` supplies the missing emitter by mapping `ui_prompt_start` / `ui_prompt_end` onto that channel. The integration file is managed by Herdr and must not be edited in place, so the emit belongs in a companion extension.
+`index.ts` 把 `ui_prompt_start` / `ui_prompt_end` 映射到这个通道上，补上了缺失的发射端。集成文件由 Herdr 管理、不能就地修改，所以发射端放在一个伴随扩展里。
 
-## Development
+## 开发
 
 ```sh
 npm install
 npm run check     # tsc --noEmit
 ```
 
-Edit in place and run `/reload` in Pi. Children are fresh processes, so they pick up changes on the next spawn without any reload.
+就地修改然后在 Pi 里 `/reload`。子进程都是全新进程，下次 spawn 自然就用上新代码，不用 reload。
 
-## Credits
+## 致谢
 
-A Herdr-native derivative of [`badlogic/pi-subagent`](https://github.com/badlogic/pi-subagent) by
-[badlogic](https://github.com/badlogic), which drove tmux. The command surface, the control-inbox
-message channel, the two-mode extension structure, the active-branch transcript reader, and much of
-the wording in `skills/subagent/SKILL.md` come from there; the Herdr substrate, the observability
-layer, the metrics reporting, and the `blocked` detection are new here.
+本项目是 [`badlogic/pi-subagent`](https://github.com/badlogic/pi-subagent)（作者 [badlogic](https://github.com/badlogic)，基于 tmux）的 Herdr 原生衍生作品。命令面、inbox 消息通道、双态扩展结构、活跃分支记录读取，以及 `skills/subagent/SKILL.md` 中的大量措辞都来自上游；Herdr 底座、可观测层、指标上报和 `blocked` 检测是这里新增的。
 
-See [NOTICE](NOTICE) for the itemised breakdown. The upstream repository publishes no license file,
-so it grants no explicit redistribution terms; this project is MIT in the same spirit as
-[Pi](https://github.com/earendil-works/pi) itself, with attribution kept here and in `NOTICE`.
+逐项拆解见 [NOTICE](NOTICE)。上游仓库没有发布任何许可证文件，因此未授予明确的再分发条款；本项目沿用与 [Pi](https://github.com/earendil-works/pi) 相同的 MIT 许可，并在此处和 `NOTICE` 中保留归因。
 
-## License
+## 许可证
 
-MIT. See [LICENSE](LICENSE).
+MIT，见 [LICENSE](LICENSE)。
